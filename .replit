@@ -1,10 +1,11 @@
 run = ["uvicorn", "main:app", "--host", "0.0.0.0", "--reload"]
-modules = ["python-3.11"]
+modules = ["python-3.11", "postgresql-16"]
 
 hidden = [".pythonlibs"]
 
 [nix]
 channel = "stable-24_05"
+packages = ["libxcrypt"]
 
 [deployment]
 run = ["uvicorn", "main:app", "--host", "0.0.0.0"]
