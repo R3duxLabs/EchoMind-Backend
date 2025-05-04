@@ -1,117 +1,173 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from models import User, Session, SummaryLog, MilestoneLog, Relationship
-from database import get_db, export_user_data
-from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel
+import os
 import uuid
-import logging
-from collections import Counter
+from typing import Dict, List, Optional, Any
 
-router = APIRouter()
+from dotenv import load_dotenv
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.future import select
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.sql import Select
+from contextlib import asynccontextmanager
 
-@router.get("/get-milestones")
-async def get_milestones(user_id: str, db: AsyncSession = Depends(get_db)):
-  try:
-      milestones = await db.execute(
-          select(MilestoneLog)
-          .where(MilestoneLog.user_id == user_id)
-          .order_by(MilestoneLog.timestamp.desc())
-      )
-      return {
-          "status": "ok",
-          "milestones": [m.__dict__ for m in milestones.scalars()]
-      }
-  except Exception as e:
-      logging.error(f"Error fetching milestones: {str(e)}")
-      raise HTTPException(status_code=500, detail="Internal server error")
-@router.get("/capsule/preview")
-async def capsule_preview(user_id: str, db: AsyncSession = Depends(get_db)):
-try:
-summaries = await db.execute(
-select(SummaryLog).where(SummaryLog.user_id == user_id).order_by(SummaryLog.timestamp.desc()).limit(5)
+from app.models import MilestoneLog, Relationship, SessionLog, SummaryLog, User
+
+# Force load .env.production to ensure async driver is loaded
+load_dotenv(dotenv_path=".env.production", override=True)
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Ensure correct driver is in use
+if not DATABASE_URL or "+asyncpg" not in DATABASE_URL:
+    raise ValueError("DATABASE_URL must use asyncpg driver (postgresql+asyncpg://...)")
+
+# Configure async engine with connection pooling
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=os.getenv("SQL_ECHO", "false").lower() == "true",
+    pool_size=5,
+    max_overflow=10,
+    pool_timeout=30,
+    pool_recycle=1800,
 )
-milestones = await db.execute(
-select(MilestoneLog).where(MilestoneLog.user_id == user_id).order_by(MilestoneLog.timestamp.desc()).limit(5)
+
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False
 )
-return {
-"status": "ok",
-"summary_samples": [s.dict for s in summaries.scalars()],
-"milestone_samples": [m.dict for m in milestones.scalars()]
-}
-except Exception as e:
-logging.error(f"Error generating capsule preview: {str(e)}")
-raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.get("/capsule/export")
-async def capsule_export(user_id: str, db: AsyncSession = Depends(get_db)):
-try:
-data = await export_user_data(user_id, db)
-if not data:
-raise HTTPException(status_code=404, detail="User not found")
-return {"status": "ok", "capsule": data}
-except Exception as e:
-logging.error(f"Error exporting capsule: {str(e)}")
-raise HTTPException(status_code=500, detail="Internal server error")
+@asynccontextmanager
+async def get_db():
+    """Provide a database session with proper error handling and cleanup."""
+    db = AsyncSessionLocal()
+    try:
+        yield db
+    finally:
+        await db.close()
 
-@router.get("/emotion-stats/summary")
-async def emotion_summary(user_id: str, db: AsyncSession = Depends(get_db)):
-try:
-result = await db.execute(
-select(SummaryLog.tags).where(SummaryLog.user_id == user_id)
-)
-tag_list = [tag for row in result.scalars() if row for tag in row]
-return {"status": "ok", "tag_counts": dict(Counter(tag_list))}
-except Exception as e:
-logging.error(f"Error compiling emotion stats: {str(e)}")
-raise HTTPException(status_code=500, detail="Internal server error")
+def serialize_model(model_instance) -> Dict[str, Any]:
+    """Convert SQLAlchemy model to dict, excluding private attributes."""
+    if model_instance is None:
+        return None
+        
+    result = {}
+    for key, value in model_instance.__dict__.items():
+        # Skip SQLAlchemy internal attributes and relationship objects
+        if not key.startswith('_'):
+            result[key] = value
+    return result
 
-@router.get("/emotion-stats/timeline")
-async def emotion_timeline(user_id: str):
-return {"status": "ok", "timeline": []}  # Future timeline analysis logic
+async def execute_query(db: AsyncSession, query: Select) -> List[Any]:
+    """Execute a query and return serialized results."""
+    result = await db.execute(query)
+    return [serialize_model(item) for item in result.scalars()]
 
-class RelationshipInput(BaseModel):
-user_a_id: str
-user_b_id: str
-relationship_type: str
+async def export_user_data(user_id: str, db: AsyncSession) -> Optional[Dict[str, Any]]:
+    """
+    Export all data related to a specific user.
+    
+    Args:
+        user_id: The unique identifier of the user
+        db: Database session
+        
+    Returns:
+        Dictionary containing user data and related records or None if user not found
+    """
+    try:
+        # Get user record
+        user = await db.get(User, user_id)
+        if not user:
+            return None
+            
+        # Prepare queries for related data
+        queries = {
+            "sessions": select(SessionLog).where(SessionLog.user_id == user_id).order_by(SessionLog.created_at.desc()),
+            "summaries": select(SummaryLog).where(SummaryLog.user_id == user_id).order_by(SummaryLog.created_at.desc()),
+            "milestones": select(MilestoneLog).where(MilestoneLog.user_id == user_id).order_by(MilestoneLog.created_at.desc()),
+            "relationships": select(Relationship).where(Relationship.user_a_id == user_id),
+        }
+        
+        # Execute all queries and compile results
+        results = {
+            "user": serialize_model(user),
+        }
+        
+        # Execute all queries concurrently
+        for key, query in queries.items():
+            results[key] = await execute_query(db, query)
+            
+        # Add metadata
+        results["metadata"] = {
+            "export_date": datetime.datetime.now().isoformat(),
+            "record_counts": {key: len(value) for key, value in results.items() if isinstance(value, list)}
+        }
+            
+        return results
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error exporting user data: {error_details}")
+        return {
+            "error": str(e),
+            "user_id": user_id,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
 
-@router.post("/create-relationship")
-async def create_relationship(payload: RelationshipInput, db: AsyncSession = Depends(get_db)):
-try:
-new_relation = Relationship(
-id=str(uuid.uuid4()),
-user_a_id=payload.user_a_id,
-user_b_id=payload.user_b_id,
-relationship_type=payload.relationship_type,
-approved=False,
-visibility_level="summary",
-visibility_rules="{}"
-)
-db.add(new_relation)
-await db.commit()
-return {"status": "ok", "relationship_id": new_relation.id}
-except Exception as e:
-logging.error(f"Relationship creation failed: {str(e)}")
-raise HTTPException(status_code=500, detail="Internal server error")
-
-@router.get("/admin/stats")
-async def admin_stats(db: AsyncSession = Depends(get_db)):
-try:
-user_count = await db.execute(select(User))
-session_count = await db.execute(select(Session))
-summary_count = await db.execute(select(SummaryLog))
-return {
-"status": "ok",
-"users": len(user_count.scalars().all()),
-"sessions": len(session_count.scalars().all()),
-"summaries": len(summary_count.scalars().all())
-}
-except Exception as e:
-logging.error(f"Error retrieving admin stats: {str(e)}")
-raise HTTPException(status_code=500, detail="Internal server error")
-
-@router.get("/flag-queue")
-async def flag_queue():
-return {"status": "ok", "flags": []}  # Placeholder for future moderation queue
+# Example usage with pagination
+async def export_user_data_paginated(
+    user_id: str, 
+    db: AsyncSession,
+    page_size: int = 100
+) -> Dict[str, Any]:
+    """Export user data with pagination for large datasets."""
+    try:
+        user = await db.get(User, user_id)
+        if not user:
+            return None
+            
+        results = {"user": serialize_model(user)}
+        
+        # Define tables to export with pagination
+        tables = {
+            "sessions": SessionLog,
+            "summaries": SummaryLog,
+            "milestones": MilestoneLog,
+        }
+        
+        # Export each table with pagination
+        for key, model in tables.items():
+            results[key] = []
+            offset = 0
+            
+            while True:
+                query = select(model).where(
+                    model.user_id == user_id
+                ).order_by(
+                    model.created_at.desc()
+                ).limit(page_size).offset(offset)
+                
+                batch = await execute_query(db, query)
+                
+                if not batch:
+                    break
+                    
+                results[key].extend(batch)
+                offset += page_size
+                
+                if len(batch) < page_size:
+                    break
+        
+        # Get relationships (typically smaller, no pagination needed)
+        results["relationships"] = await execute_query(
+            db, select(Relationship).where(Relationship.user_a_id == user_id)
+        )
+        
+        return results
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error exporting user data: {error_details}")
+        return {"error": str(e)}
