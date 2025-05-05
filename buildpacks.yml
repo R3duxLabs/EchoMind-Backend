@@ -1,0 +1,5 @@
+---
+groups:
+  - name: python
+    buildpacks:
+      - id: heroku/python
