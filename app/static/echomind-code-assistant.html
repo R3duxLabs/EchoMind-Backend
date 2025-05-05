@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EchoMind Code Assistant</title>
+    <link rel="stylesheet" href="/static/css/echomind.css">
+    <link rel="stylesheet" href="/static/css/echomind-code-assistant.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.7.0/styles/github.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.7.0/lib/highlight.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+</head>
+<body>
+    <div class="chat-container">
+        <header class="chat-header">
+            <h1>EchoMind Code Assistant</h1>
+            <div class="settings-button" id="settingsButton">⚙️</div>
+        </header>
+
+        <div class="settings-panel" id="settingsPanel">
+            <h2>Settings</h2>
+            <div class="settings-group">
+                <label for="modelSelect">Model:</label>
+                <select id="modelSelect">
+                    <option value="claude-3-opus-20240229">Claude 3 Opus</option>
+                    <option value="claude-3-sonnet-20240229" selected>Claude 3 Sonnet</option>
+                    <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
+                </select>
+            </div>
+            <div class="settings-group">
+                <label for="temperatureSlider">Temperature: <span id="temperatureValue">0.7</span></label>
+                <input type="range" id="temperatureSlider" min="0" max="1" step="0.1" value="0.7">
+            </div>
+            <div class="settings-group">
+                <label>
+                    <input type="checkbox" id="executeCodeCheckbox">
+                    Execute code automatically
+                </label>
+            </div>
+            <div class="settings-group">
+                <label for="userIdInput">User ID:</label>
+                <input type="text" id="userIdInput" value="user_123">
+            </div>
+            <div class="settings-group">
+                <label for="apiKeyInput">API Key:</label>
+                <input type="password" id="apiKeyInput">
+            </div>
+            <div class="settings-group buttons">
+                <button id="saveSettingsButton">Save</button>
+                <button id="cancelSettingsButton">Cancel</button>
+            </div>
+        </div>
+
+        <main class="chat-messages" id="chatMessages">
+            <div class="message system">
+                <div class="message-content">
+                    <p>👋 Welcome to the EchoMind Code Assistant! I'm here to help you with programming tasks, code reviews, debugging, and more. How can I assist you today?</p>
+                </div>
+            </div>
+        </main>
+
+        <div class="code-execution-panel" id="codeExecutionPanel">
+            <div class="code-execution-header">
+                <h3>Code Execution</h3>
+                <button id="closeExecutionPanelButton">×</button>
+            </div>
+            <div class="code-execution-output" id="codeExecutionOutput"></div>
+        </div>
+
+        <footer class="chat-input-container">
+            <textarea id="messageInput" placeholder="Type your message here..." rows="3"></textarea>
+            <div class="chat-input-buttons">
+                <button id="uploadButton" title="Upload a file">📎</button>
+                <button id="sendButton">Send</button>
+            </div>
+        </footer>
+
+        <input type="file" id="fileInput" style="display: none;">
+    </div>
+
+    <div class="tooltip" id="tooltip">
+        <div class="tooltip-content" id="tooltipContent"></div>
+    </div>
+
+    <script src="/static/js/echomind-code-assistant.js"></script>
+</body>
+</html>

@@ -11,6 +11,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+import asyncio
 
 from app.database import get_db
 from app.get_api_key import get_api_key, APIKeyHeader
@@ -18,15 +19,26 @@ from app.exception_handler import APIException, api_exception_handler, LoggingMi
 from app.error_handlers import setup_error_handlers
 from app.routes import (
     code,
+    claude_code,
     health,
     session, 
     summary,
     milestone,
+    memory,
+    memory_visualization,
     admin_stats_route,
     log_session_route, 
     log_summary_route, 
     log_milestone_route,
-    capsule_preview_route
+    capsule_preview_route,
+    personality,
+    auth,
+    privacy,
+    pickaxe,
+    websocket,
+    frontend,
+    knowledge,
+    agent
 )
 
 # Import and configure logging
@@ -46,15 +58,26 @@ app = FastAPI(
 
 # Add routes
 app.include_router(code.router, prefix="/code", tags=["Code Execution"])
+app.include_router(claude_code.router, prefix="/claude-code", tags=["Claude Code"])
 app.include_router(health.router, tags=["Health"])
 app.include_router(session.router, prefix="/session", tags=["Sessions"])
 app.include_router(summary.router, prefix="/summary", tags=["Summaries"])
 app.include_router(milestone.router, prefix="/milestone", tags=["Milestones"])
+app.include_router(memory.router, prefix="/memory", tags=["Memory"])
+app.include_router(memory_visualization.router, prefix="/memory", tags=["Memory Visualization"])
+app.include_router(personality.router, prefix="/personality", tags=["Personality"])
+app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+app.include_router(privacy.router, prefix="/privacy", tags=["Privacy"])
 app.include_router(log_session_route.router, prefix="/log-session", tags=["Logging"])
 app.include_router(log_summary_route.router, prefix="/log-summary", tags=["Logging"])
 app.include_router(log_milestone_route.router, prefix="/log-milestone", tags=["Logging"])
 app.include_router(admin_stats_route.router, prefix="/admin", tags=["Admin"])
 app.include_router(capsule_preview_route.router, prefix="/capsule", tags=["Capsule"])
+app.include_router(pickaxe.router, prefix="/pickaxe", tags=["Pickaxe"])
+app.include_router(websocket.router, tags=["WebSocket"])
+app.include_router(frontend.router, prefix="/frontend", tags=["Frontend"])
+app.include_router(knowledge.router, prefix="/knowledge", tags=["Knowledge"])
+app.include_router(agent.router, prefix="/agent", tags=["Agent"])
 
 # Add error handlers
 app.add_exception_handler(APIException, api_exception_handler)
@@ -62,6 +85,17 @@ setup_error_handlers(app)
 
 # Add middleware
 app.add_middleware(LoggingMiddleware)
+
+# Add rate limiting middleware
+from app.security.rate_limiter import add_rate_limit_headers
+app.middleware("http")(add_rate_limit_headers)
+
+# Add CORS middleware
+from app.middleware import setup_cors
+setup_cors(app)
+
+# Serve static files
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 # ----------------------------- Response Models -----------------------------
 
@@ -133,12 +167,34 @@ def custom_openapi():
             tag["description"] = "Endpoints for accessing and managing user summaries"
         elif tag["name"] == "Milestones":
             tag["description"] = "Endpoints for tracking user milestones"
+        elif tag["name"] == "Memory":
+            tag["description"] = "Endpoints for managing user memory"
+        elif tag["name"] == "Memory Visualization":
+            tag["description"] = "Endpoints for visualizing user memory in different formats"
+        elif tag["name"] == "Personality":
+            tag["description"] = "Endpoints for managing agent personality profiles and user preferences"
+        elif tag["name"] == "Authentication":
+            tag["description"] = "Endpoints for user authentication and API key management"
+        elif tag["name"] == "Privacy":
+            tag["description"] = "Endpoints for privacy-related functionality including data export and PII management"
         elif tag["name"] == "Logging":
             tag["description"] = "Endpoints for logging user interactions"
         elif tag["name"] == "Admin":
             tag["description"] = "Admin-only endpoints for system management"
         elif tag["name"] == "Capsule":
             tag["description"] = "Endpoints for managing memory capsules"
+        elif tag["name"] == "Pickaxe":
+            tag["description"] = "Endpoints for Pickaxe knowledge base and agent operations"
+        elif tag["name"] == "WebSocket":
+            tag["description"] = "WebSocket endpoints for real-time communication"
+        elif tag["name"] == "Frontend":
+            tag["description"] = "Endpoints specifically designed for frontend applications"
+        elif tag["name"] == "Knowledge":
+            tag["description"] = "Endpoints for knowledge base management and search"
+        elif tag["name"] == "Agent":
+            tag["description"] = "Endpoints for agent management and interaction"
+        elif tag["name"] == "Claude Code":
+            tag["description"] = "Endpoints for Claude Code AI code assistant"
     
     app.openapi_schema = openapi_schema
     return app.openapi_schema
@@ -209,6 +265,31 @@ async def add_request_id(request: Request, call_next):
             "processing_time": process_time
         })
         raise
+
+# Startup event handler
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database and seed initial data"""
+    # Configure file paths - make sure these directories exist
+    Path("/mnt/data/app").mkdir(parents=True, exist_ok=True)
+    Path("/mnt/data/logs").mkdir(parents=True, exist_ok=True)
+
+    # Seed initial data
+    try:
+        # Get a database session
+        from app.database import async_session_maker
+        
+        async with async_session_maker() as db:
+            # Seed personality profiles
+            from app.utils.personality_seed import seed_personality_profiles
+            await seed_personality_profiles(db)
+    except Exception as e:
+        logger.error(f"Error during startup: {str(e)}")
+        
+    logger.info("EchoMind API initialized successfully", extra={
+        "version": "2.0.0",
+        "environment": "development"
+    })
 
 # Only execute this if running the script directly
 if __name__ == "__main__":
