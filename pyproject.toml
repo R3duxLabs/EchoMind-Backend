@@ -1,8 +1,8 @@
 [tool.poetry]
-name = "python-template"
-version = "0.1.0"
-description = ""
-authors = ["Your Name <you@example.com>"]
+name = "echomind-backend"
+version = "2.0.0"
+description = "EchoMind Backend API"
+authors = ["EchoMind Team <team@echomind.ai>"]
 
 [tool.poetry.dependencies]
 python = ">=3.10.0,<3.12"
@@ -12,6 +12,15 @@ pydantic = "^2.11.4"
 sqlalchemy = "^2.0.40"
 asyncpg = "^0.30.0"
 python-dotenv = "^1.1.0"
+pytest = "^7.3.1"
+pytest-asyncio = "^0.21.0"
+pytest-cov = "^4.1.0"
+httpx = "^0.24.1"
+aiosqlite = "^0.19.0"
+cryptography = "^41.0.1"
+passlib = "^1.7.4"
+python-jose = "^3.3.0"
+python-multipart = "^0.0.6"
 
 [tool.pyright]
 # https://github.com/microsoft/pyright/blob/main/docs/configuration.md
@@ -22,6 +31,20 @@ exclude = [".cache"]
 # https://beta.ruff.rs/docs/configuration/
 select = ['E', 'W', 'F', 'I', 'B', 'C4', 'ARG', 'SIM']
 ignore = ['W291', 'W292', 'W293']
+
+[tool.poetry.scripts]
+test = "pytest:main"
+test-cov = "pytest:main --cov=app --cov-report=term-missing"
+test-unit = "pytest:main tests/unit"
+test-integration = "pytest:main tests/integration"
+test-api = "pytest:main tests/api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+asyncio_mode = "auto"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
