@@ -74,6 +74,11 @@ class AgentType(str, enum.Enum):
     friend = "friend"
     bridge = "bridge"
     system = "system"
+    assistant = "assistant"
+    expert = "expert"
+    critic = "critic"
+    creative = "creative"
+    mediator = "mediator"
 
 # ---------------------- BASE MIXINS ----------------------
 class TimestampMixin:
@@ -140,6 +145,10 @@ class User(Base, TimestampMixin):
     
     # Usage stats
     usage_stats = relationship("UsageStats", back_populates="user", cascade="all, delete-orphan")
+    
+    # Personality preferences
+    personality_preferences = relationship("UserPersonalityPreference", back_populates="user", cascade="all, delete-orphan")
+    personality_adaptations = relationship("PersonalityAdaptation", back_populates="user", cascade="all, delete-orphan")
     
     @validates('email')
     def validate_email(self, key, email):
@@ -374,11 +383,15 @@ class AgentDefinition(Base, TimestampMixin):
     version = Column(String, nullable=False, default="1.0.0")
     is_active = Column(Boolean, default=True)
     
+    # Reference to the personality profile used by this agent
+    personality_profile_id = Column(String, ForeignKey("personality_profiles.id", ondelete="SET NULL"))
+    
     # Agents should be versioned, and this allows for referencing previous versions
     previous_version_id = Column(String, ForeignKey("agent_definitions.id", ondelete="SET NULL"))
     
     # Relationship to previous version
     previous_version = relationship("AgentDefinition", remote_side=[id])
+    personality_profile = relationship("PersonalityProfile")
     
     __table_args__ = (
         Index('idx_agent_name_version', 'name', 'version'),
@@ -386,6 +399,150 @@ class AgentDefinition(Base, TimestampMixin):
     
     def __repr__(self):
         return f"<AgentDefinition(name={self.name}, version={self.version})>"
+
+# ---------------------- PERSONALITY PROFILES ----------------------
+class PersonalityTrait(str, enum.Enum):
+    """Enumeration of personality traits that can be assigned to agents."""
+    ANALYTICAL = "analytical"
+    CREATIVE = "creative"
+    EMPATHETIC = "empathetic"
+    DIRECT = "direct"
+    SUPPORTIVE = "supportive"
+    CHALLENGING = "challenging"
+    ADAPTABLE = "adaptable"
+    STRUCTURED = "structured"
+    DETAILED = "detailed"
+    CONCISE = "concise"
+    FORMAL = "formal"
+    CASUAL = "casual"
+    OPTIMISTIC = "optimistic"
+    REALISTIC = "realistic"
+    CURIOUS = "curious"
+    PATIENT = "patient"
+
+class CommunicationStyle(str, enum.Enum):
+    """Enumeration of communication styles for agent responses."""
+    SOCRATIC = "socratic"  # Asks questions to guide thinking
+    INSTRUCTIVE = "instructive"  # Provides direct guidance
+    COLLABORATIVE = "collaborative"  # Works with user as a partner
+    COACHING = "coaching"  # Encourages and guides growth
+    TECHNICAL = "technical"  # Focuses on technical precision
+    ACCESSIBLE = "accessible"  # Simplifies complex topics
+    NARRATIVE = "narrative"  # Uses stories and examples
+    METHODICAL = "methodical"  # Step-by-step approach
+
+class EmotionalTone(str, enum.Enum):
+    """Emotional tone for agent communication."""
+    NEUTRAL = "neutral"
+    ENTHUSIASTIC = "enthusiastic"
+    CALM = "calm"
+    ENCOURAGING = "encouraging"
+    REASSURING = "reassuring"
+    AUTHORITATIVE = "authoritative"
+    FRIENDLY = "friendly"
+    PROFESSIONAL = "professional"
+
+class PersonalityProfile(Base, TimestampMixin):
+    """Database model for personality profiles."""
+    __tablename__ = "personality_profiles"
+    
+    id = Column(String, primary_key=True, default=gen_id)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    
+    # Primary attributes
+    primary_traits = Column(ARRAY(String), nullable=False)
+    secondary_traits = Column(ARRAY(String), default=[])
+    communication_style = Column(Enum(CommunicationStyle), nullable=False)
+    emotional_tone = Column(Enum(EmotionalTone), nullable=False)
+    
+    # Compatible agent types
+    compatible_agent_types = Column(ARRAY(String), nullable=False)
+    
+    # Response modifiers
+    verbosity_level = Column(Float, nullable=False, default=0.5)
+    technical_level = Column(Float, nullable=False, default=0.5)
+    formality_level = Column(Float, nullable=False, default=0.5)
+    
+    # Dynamic adaptation settings
+    adapts_to_user = Column(Boolean, default=True)
+    adaptation_rate = Column(Float, default=0.2)
+    
+    # Prompt modifiers
+    prompt_modifiers = Column(JSON, default={})
+    
+    # System fields
+    is_system = Column(Boolean, default=False)
+    version = Column(String, default="1.0.0")
+    is_active = Column(Boolean, default=True)
+    
+    __table_args__ = (
+        Index('idx_personality_name', 'name'),
+        UniqueConstraint('name', 'version', name='uix_personality_version'),
+    )
+    
+    def __repr__(self):
+        return f"<PersonalityProfile(name={self.name}, style={self.communication_style})>"
+
+class UserPersonalityPreference(Base, TimestampMixin):
+    """Records user preferences for agent personalities."""
+    __tablename__ = "user_personality_preferences"
+    
+    id = Column(String, primary_key=True, default=gen_id)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Preferred personality traits and settings
+    preferred_traits = Column(ARRAY(String), default=[])
+    communication_style_preference = Column(Enum(CommunicationStyle))
+    emotional_tone_preference = Column(Enum(EmotionalTone))
+    verbosity_preference = Column(Float)
+    technical_level_preference = Column(Float)
+    formality_preference = Column(Float)
+    
+    # Agent-specific preferences
+    agent_specific_preferences = Column(JSON, default={})
+    
+    # Relationship
+    user = relationship("User", back_populates="personality_preferences")
+    
+    __table_args__ = (
+        Index('idx_user_personality_pref', 'user_id'),
+    )
+    
+    def __repr__(self):
+        return f"<UserPersonalityPreference(user_id={self.user_id})>"
+
+class PersonalityAdaptation(Base, TimestampMixin):
+    """Tracks adaptations to personality profiles for specific users."""
+    __tablename__ = "personality_adaptations"
+    
+    id = Column(String, primary_key=True, default=gen_id)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    agent_type = Column(Enum(AgentType), nullable=False)
+    base_profile_id = Column(String, ForeignKey("personality_profiles.id", ondelete="CASCADE"), nullable=False)
+    
+    # Adapted parameters
+    adapted_traits = Column(ARRAY(String))
+    adapted_verbosity = Column(Float)
+    adapted_technical_level = Column(Float)
+    adapted_formality = Column(Float)
+    adapted_prompt_modifiers = Column(JSON, default={})
+    
+    # Adaptation metadata
+    adaptation_reason = Column(Text)
+    interaction_metrics = Column(JSON, default={})
+    
+    # Relationships
+    user = relationship("User", back_populates="personality_adaptations")
+    base_profile = relationship("PersonalityProfile")
+    
+    __table_args__ = (
+        Index('idx_personality_adaptation_user', 'user_id', 'agent_type'),
+        UniqueConstraint('user_id', 'agent_type', 'base_profile_id', name='uix_user_agent_profile'),
+    )
+    
+    def __repr__(self):
+        return f"<PersonalityAdaptation(user_id={self.user_id}, agent_type={self.agent_type})>"
 
 # ---------------------- BRIDGE SESSION ----------------------
 class BridgeSession(Base, TimestampMixin):
