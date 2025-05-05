@@ -5,6 +5,7 @@ API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 VALID_API_KEYS = {
+    "CLAUDE_CODE_API_KEY": "echomind-claudecode-key",
     "ECHO_API_KEY": "echomind-echo-key",
     "ELORA_API_KEY": "echomind-elora-key",
     "ELLIOT_API_KEY": "echomind-elliot-key",
