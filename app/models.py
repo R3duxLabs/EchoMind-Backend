@@ -54,6 +54,27 @@ class VisibilityLevel(str, enum.Enum):
     full = "full"
     custom = "custom"
 
+class FeedbackType(str, enum.Enum):
+    session = "session"
+    suggestion = "suggestion" 
+    bug = "bug"
+    feature = "feature"
+
+class BridgeStatus(str, enum.Enum):
+    pending = "pending"
+    active = "active"
+    paused = "paused"
+    completed = "completed"
+    rejected = "rejected"
+
+class AgentType(str, enum.Enum):
+    therapist = "therapist"
+    coach = "coach"
+    parent = "parent"
+    friend = "friend"
+    bridge = "bridge"
+    system = "system"
+
 # ---------------------- BASE MIXINS ----------------------
 class TimestampMixin:
     """Mixin for created_at and updated_at timestamps"""
@@ -101,6 +122,24 @@ class User(Base, TimestampMixin):
         back_populates="user_b",
         cascade="all, delete-orphan"
     )
+    
+    # Bridge sessions
+    bridge_sessions_as_initiator = relationship(
+        "BridgeSession",
+        foreign_keys="BridgeSession.initiator_id",
+        back_populates="initiator",
+        cascade="all, delete-orphan"
+    )
+    
+    bridge_sessions_as_participant = relationship(
+        "BridgeSession",
+        foreign_keys="BridgeSession.participant_id",
+        back_populates="participant",
+        cascade="all, delete-orphan"
+    )
+    
+    # Usage stats
+    usage_stats = relationship("UsageStats", back_populates="user", cascade="all, delete-orphan")
     
     @validates('email')
     def validate_email(self, key, email):
@@ -278,12 +317,6 @@ class Relationship(Base, TimestampMixin):
         return f"<Relationship(id={self.id}, type={self.relationship_type}, a={self.user_a_id}, b={self.user_b_id})>"
 
 # ---------------------- USER FEEDBACK ----------------------
-class FeedbackType(str, enum.Enum):
-    session = "session"
-    suggestion = "suggestion" 
-    bug = "bug"
-    feature = "feature"
-
 class UserFeedback(Base, UserRelatedMixin, TimestampMixin):
     __tablename__ = "user_feedback"
     
@@ -296,6 +329,10 @@ class UserFeedback(Base, UserRelatedMixin, TimestampMixin):
     
     user = relationship("User")
     related_session = relationship("SessionLog")
+    
+    __table_args__ = (
+        Index('idx_feedback_user_type', 'user_id', 'feedback_type'),
+    )
     
     def __repr__(self):
         return f"<UserFeedback(id={self.id}, type={self.feedback_type}, user={self.user_id})>"
@@ -312,7 +349,7 @@ class UsageStats(Base):
     total_session_time = Column(Float, default=0.0)  # In seconds
     agents_used = Column(ARRAY(String), default=[])
     
-    user = relationship("User")
+    user = relationship("User", back_populates="usage_stats")
     
     __table_args__ = (
         UniqueConstraint('user_id', 'date', name='uix_user_date_stats'),
@@ -320,3 +357,90 @@ class UsageStats(Base):
     
     def __repr__(self):
         return f"<UsageStats(user={self.user_id}, date={self.date}, tokens={self.total_tokens})>"
+
+# ---------------------- AGENT DEFINITION ----------------------
+class AgentDefinition(Base, TimestampMixin):
+    __tablename__ = "agent_definitions"
+    
+    id = Column(String, primary_key=True, default=gen_id)
+    name = Column(String, nullable=False, unique=True)
+    display_name = Column(String, nullable=False)
+    description = Column(Text, nullable=False)
+    type = Column(Enum(AgentType), nullable=False)
+    system_prompt = Column(Text, nullable=False)
+    tone_profile = Column(JSON, nullable=False)
+    capabilities = Column(ARRAY(String), default=[])
+    emoji = Column(String)
+    version = Column(String, nullable=False, default="1.0.0")
+    is_active = Column(Boolean, default=True)
+    
+    # Agents should be versioned, and this allows for referencing previous versions
+    previous_version_id = Column(String, ForeignKey("agent_definitions.id", ondelete="SET NULL"))
+    
+    # Relationship to previous version
+    previous_version = relationship("AgentDefinition", remote_side=[id])
+    
+    __table_args__ = (
+        Index('idx_agent_name_version', 'name', 'version'),
+    )
+    
+    def __repr__(self):
+        return f"<AgentDefinition(name={self.name}, version={self.version})>"
+
+# ---------------------- BRIDGE SESSION ----------------------
+class BridgeSession(Base, TimestampMixin):
+    __tablename__ = "bridge_sessions"
+    
+    id = Column(String, primary_key=True, default=gen_id)
+    initiator_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    participant_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    status = Column(Enum(BridgeStatus), default=BridgeStatus.pending, nullable=False)
+    topic = Column(String)
+    context = Column(JSON, default={})
+    memory_timeframe_start = Column(DateTime(timezone=True))
+    memory_timeframe_end = Column(DateTime(timezone=True))
+    intervention_level = Column(Integer, default=2)  # 1-5 scale, with 1 being minimal and 5 being maximal
+    notes = Column(Text)
+    ended_at = Column(DateTime(timezone=True))
+    
+    # Relationships
+    initiator = relationship("User", foreign_keys=[initiator_id], back_populates="bridge_sessions_as_initiator")
+    participant = relationship("User", foreign_keys=[participant_id], back_populates="bridge_sessions_as_participant")
+    
+    # Bridge messages
+    messages = relationship("BridgeMessage", back_populates="session", cascade="all, delete-orphan")
+    
+    __table_args__ = (
+        Index('idx_bridge_users', 'initiator_id', 'participant_id'),
+        Index('idx_bridge_status', 'status'),
+    )
+    
+    def __repr__(self):
+        return f"<BridgeSession(id={self.id}, initiator={self.initiator_id}, participant={self.participant_id}, status={self.status})>"
+
+# ---------------------- BRIDGE MESSAGE ----------------------
+class BridgeMessage(Base, TimestampMixin):
+    __tablename__ = "bridge_messages"
+    
+    id = Column(String, primary_key=True, default=gen_id)
+    session_id = Column(String, ForeignKey("bridge_sessions.id", ondelete="CASCADE"), nullable=False)
+    sender_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    original_text = Column(Text, nullable=False)
+    translated_text = Column(Text)
+    emotional_tone = Column(String)
+    confidence = Column(Float)
+    intervention_applied = Column(Boolean, default=False)
+    intervention_type = Column(String)
+    intervention_reason = Column(Text)
+    
+    # Relationships
+    session = relationship("BridgeSession", back_populates="messages")
+    sender = relationship("User")
+    
+    __table_args__ = (
+        Index('idx_bridge_message_session', 'session_id'),
+        Index('idx_bridge_message_sender', 'sender_id'),
+    )
+    
+    def __repr__(self):
+        return f"<BridgeMessage(id={self.id}, session={self.session_id}, sender={self.sender_id})>"
